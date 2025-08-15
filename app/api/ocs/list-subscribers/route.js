@@ -2,7 +2,8 @@ import { NextResponse } from "next/server";
 
 const API_URL = process.env.OCS_API_URL || "https://ocs-api.esimvault.cloud/v1";
 const OCS_TOKEN = process.env.OCS_TOKEN || "HgljQn4Uhe6Ny07qTzYqPLjJ";
-const ALLOWED = (process.env.OCS_ALLOWED_ACCOUNTS || "3771").split(",").map(a=>Number(a.trim())).filter(Boolean);
+const ALLOWED = (process.env.OCS_ALLOWED_ACCOUNTS || "3771")
+  .split(",").map(a=>Number(a.trim())).filter(Boolean);
 
 async function callOCS(body) {
   const r = await fetch(`${API_URL}?token=${OCS_TOKEN}`, {
@@ -18,24 +19,35 @@ async function callOCS(body) {
 
 export async function POST(req) {
   try {
-    const { accountId, limit = 200, offset = 0 } = await req.json() || {};
+    const { accountId } = await req.json() || {};
     const acct = Number(accountId);
-    if (!ALLOWED.includes(acct)) return NextResponse.json({ error: "Forbidden for this account" }, { status: 403 });
+    if (!ALLOWED.includes(acct)) {
+      return NextResponse.json({ error: "Forbidden for this account" }, { status: 403 });
+    }
 
+    // No limit/offset — OCS rejected them
     const attempts = [
-      { listSubscriber:  { accountId: acct, limit, offset } },
-      { listSubscriber:  { accountid:  acct, limit, offset } },
-      { listSubscribers: { accountId: acct, limit, offset } },
-      { listSubscribers: { accountid:  acct, limit, offset } }
+      { listSubscriber:  { accountId: acct } },
+      { listSubscriber:  { accountid:  acct } },
+      { listSubscribers: { accountId: acct } },
+      { listSubscribers: { accountid:  acct } }
     ];
 
     for (const body of attempts) {
       try {
         const data = await callOCS(body);
-        if (Array.isArray(data?.result?.subscribers)) return NextResponse.json(data);
+
+        // Some OCS versions return result.subscribers, others result.subscriberList
+        const subs = data?.result?.subscribers ?? data?.result?.subscriberList ?? [];
+        if (Array.isArray(subs)) {
+          return NextResponse.json({ result: { subscribers: subs } });
+        }
         if (data && !data.error) return NextResponse.json(data);
-      } catch {}
+      } catch (e) {
+        // try next variant
+      }
     }
+
     return NextResponse.json({ result: { subscribers: [] } });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
