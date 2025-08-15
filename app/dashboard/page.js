@@ -13,8 +13,13 @@ async function postJSON(path, body) {
   return json;
 }
 
+function safeArray(v) { return Array.isArray(v) ? v : []; }
+function safeString(v) { return (v === null || v === undefined) ? "" : String(v); }
+
 export default function Dashboard(){
-  const [accountId, setAccountId] = useState(Number(process.env.NEXT_PUBLIC_DEFAULT_ACCOUNT || 3771));
+  const [accountId, setAccountId] = useState(
+    Number(process.env.NEXT_PUBLIC_DEFAULT_ACCOUNT || 3771) || 3771
+  );
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -22,7 +27,7 @@ export default function Dashboard(){
   const load = async () => {
     setLoading(true); setError("");
     try {
-      const json = await postJSON("/api/ocs/list-subscribers", { accountId, limit: 200 });
+      const json = await postJSON("/api/ocs/list-subscribers", { accountId });
       setData(json);
     } catch (e) {
       setError(String(e));
@@ -30,23 +35,52 @@ export default function Dashboard(){
     } finally { setLoading(false); }
   };
 
-  useEffect(()=>{ if (!localStorage.getItem("userId")) { window.location.href='/login'; return; } load(); }, []);
+  useEffect(()=> {
+    try {
+      if (typeof window !== "undefined" && !localStorage.getItem("userId")) {
+        window.location.href="/login";
+        return;
+      }
+    } catch {}
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const rows = useMemo(()=> data?.result?.subscribers || [], [data]);
+  // Normalize to one path for rows
+  const rows = useMemo(() => {
+    const r = data?.result;
+    if (!r) return [];
+    return safeArray(r.subscribers ?? r.subscriberList ?? r.items ?? r.list);
+  }, [data]);
+
   const kpis = useMemo(()=> {
     const total = rows.length;
-    const active = rows.filter(s => (s.status||'').toUpperCase()==='ACTIVE').length;
+    const active = rows.filter(s => safeString(s?.status).toUpperCase() === "ACTIVE").length;
     return { total, active, inactive: total - active };
   }, [rows]);
+
+  // Best-effort raw payload preview (slice to avoid huge dump)
+  const rawPreview = useMemo(() => {
+    try {
+      const str = JSON.stringify(data ?? {}, null, 2);
+      return str.length > 4000 ? (str.slice(0, 4000) + "\n...truncated...") : str;
+    } catch { return ""; }
+  }, [data]);
 
   return (
     <div>
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:16, flexWrap:'wrap' }}>
         <h1 style={{ fontSize:24, fontWeight:700 }}>OCS Dashboard</h1>
         <div style={{ display:'flex', gap:8 }}>
-          <input type="number" value={accountId} onChange={(e)=>setAccountId(Number(e.target.value))}
-            style={{ width:160, padding:8, borderRadius:10, border:'1px solid #2a3356', background:'#0f1428', color:'#e9ecf1' }}/>
-          <button onClick={load} style={{ padding:'8px 14px', borderRadius:10, border:0, background:'#4b74ff', color:'#fff', fontWeight:600 }}>Refresh</button>
+          <input
+            type="number"
+            value={Number.isFinite(accountId) ? accountId : 3771}
+            onChange={(e)=>setAccountId(Number(e.target.value))}
+            style={{ width:160, padding:8, borderRadius:10, border:'1px solid #2a3356', background:'#0f1428', color:'#e9ecf1' }}
+          />
+          <button onClick={load} style={{ padding:'8px 14px', borderRadius:10, border:0, background:'#4b74ff', color:'#fff', fontWeight:600 }}>
+            Refresh
+          </button>
         </div>
       </div>
 
@@ -56,10 +90,10 @@ export default function Dashboard(){
         </div>
       )}
 
-      {data && !rows.length && (
+      {data && rows.length === 0 && (
         <div style={{ marginTop:16, padding:12, borderRadius:12, background:'#1d233a', color:'#cfd8ff' }}>
           <div style={{ fontWeight:700, marginBottom:8 }}>Raw response (no subscribers parsed):</div>
-          <pre style={{ margin:0, whiteSpace:'pre-wrap' }}>{JSON.stringify(data, null, 2)}</pre>
+          <pre style={{ margin:0, whiteSpace:'pre-wrap' }}>{rawPreview}</pre>
         </div>
       )}
 
@@ -85,12 +119,12 @@ export default function Dashboard(){
         {loading && <div style={{ padding:16 }}>Loading…</div>}
         {!loading && !error && rows.map((s, idx) => (
           <div key={idx} style={{ display:'grid', gridTemplateColumns:'1.2fr 2fr 1fr 2fr 1.5fr 1.5fr', padding:12, borderBottom:'1px solid #2a3356' }}>
-            <div>{s.subscriberId || s.subscriberid}</div>
-            <div style={{ fontFamily:'ui-monospace,SFMono-Regular,Menlo,Monaco' }}>{s.iccid}</div>
-            <div>{s.status}</div>
-            <div>{s.prepaidpackagetemplatename || s.packageName}</div>
-            <div>{s.tsactivationutc || s.activationDate}</div>
-            <div>{s.tsexpirationutc || s.expiryDate}</div>
+            <div>{safeString(s?.subscriberId ?? s?.subscriberid)}</div>
+            <div style={{ fontFamily:'ui-monospace,SFMono-Regular,Menlo,Monaco' }}>{safeString(s?.iccid)}</div>
+            <div>{safeString(s?.status)}</div>
+            <div>{safeString(s?.prepaidpackagetemplatename ?? s?.packageName)}</div>
+            <div>{safeString(s?.tsactivationutc ?? s?.activationDate)}</div>
+            <div>{safeString(s?.tsexpirationutc ?? s?.expiryDate)}</div>
           </div>
         ))}
         {!loading && !error && rows.length===0 && <div style={{ padding:16, opacity:0.8 }}>No data.</div>}
