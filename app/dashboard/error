@@ -1,0 +1,16 @@
+"use client";
+
+export default function Error({ error, reset }) {
+  return (
+    <div style={{ marginTop:16, padding:16, borderRadius:12, background:'#3a2030', color:'#ffd4d4', whiteSpace:'pre-wrap' }}>
+      <h2 style={{ marginTop:0 }}>Dashboard crashed</h2>
+      <div>{String(error?.message || error)}</div>
+      <button
+        onClick={() => reset()}
+        style={{ marginTop:12, padding:'8px 12px', border:0, borderRadius:10, background:'#4b74ff', color:'#fff', fontWeight:600 }}
+      >
+        Try again
+      </button>
+    </div>
+  );
+}
