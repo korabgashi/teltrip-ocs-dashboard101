@@ -10,11 +10,35 @@ async function callOCS(body) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-    cache: "no-store"
+    cache: "no-store",
   });
   const text = await r.text();
   if (!r.ok) throw new Error(`OCS ${r.status}: ${text.slice(0,300)}`);
   try { return JSON.parse(text); } catch { return { raw: text }; }
+}
+
+function normalizeSubs(data) {
+  if (!data) return [];
+  // Try all likely result paths
+  const res = data.result || data.results || data;
+  const candidates = [
+    res?.subscribers,
+    res?.subscriberList,
+    res?.items,
+    res?.list,
+  ].filter(Boolean);
+  for (const c of candidates) if (Array.isArray(c)) return c;
+
+  // Sometimes it comes nested weirdly; flatten any arrays found
+  const arrays = [];
+  const stack = [res];
+  while (stack.length) {
+    const v = stack.pop();
+    if (Array.isArray(v)) arrays.push(v);
+    else if (v && typeof v === "object") stack.push(...Object.values(v));
+  }
+  for (const a of arrays) if (a.length && typeof a[0] === "object") return a;
+  return [];
 }
 
 export async function POST(req) {
@@ -25,30 +49,33 @@ export async function POST(req) {
       return NextResponse.json({ error: "Forbidden for this account" }, { status: 403 });
     }
 
-    // No limit/offset — OCS rejected them
+    // Try a bunch of op names (no limit/offset because your OCS rejects them)
     const attempts = [
-      { listSubscriber:  { accountId: acct } },
-      { listSubscriber:  { accountid:  acct } },
+      { listSubscriber: { accountId: acct } },
+      { listSubscriber: { accountid: acct } },
       { listSubscribers: { accountId: acct } },
-      { listSubscribers: { accountid:  acct } }
+      { listSubscribers: { accountid: acct } },
+      { ListSubscriber: { accountId: acct } },     // some installs use caps
+      { listAllSubscribers: { accountId: acct } }, // alt op names seen in the wild
+      { getSubscribers: { accountId: acct } },
     ];
 
+    let last = null;
     for (const body of attempts) {
       try {
         const data = await callOCS(body);
-
-        // Some OCS versions return result.subscribers, others result.subscriberList
-        const subs = data?.result?.subscribers ?? data?.result?.subscriberList ?? [];
-        if (Array.isArray(subs)) {
-          return NextResponse.json({ result: { subscribers: subs } });
+        const subs = normalizeSubs(data);
+        if (subs.length > 0) {
+          return NextResponse.json({ result: { subscribers: subs }, tried: body });
         }
-        if (data && !data.error) return NextResponse.json(data);
+        last = { data, tried: body };
       } catch (e) {
-        // try next variant
+        last = { error: String(e), tried: body };
       }
     }
 
-    return NextResponse.json({ result: { subscribers: [] } });
+    // Return last thing we saw so the UI can show it (already handled on the page)
+    return NextResponse.json({ result: { subscribers: [] }, note: last });
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
